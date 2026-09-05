@@ -27,7 +27,7 @@ load_dotenv()
 CORS_ORIGINS = [
     origin.strip()
     for origin in os.environ.get(
-        "CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000,http://localhost:5500,https://tu-front.vercel.app"
+        "CORS_ORIGINS", "*"
     ).split(",")
     if origin.strip()
 ]
@@ -400,8 +400,8 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=CORS_ORIGINS if CORS_ORIGINS else ["*"],
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
