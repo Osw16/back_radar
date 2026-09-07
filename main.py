@@ -329,13 +329,16 @@ def timeframe_from_days(days: int = 2) -> str:
     return f"{inicio} {fin}"
 
 
+TRENDS_CACHE = {}
+TRENDS_CACHE_TTL = 6 * 60 * 60  # 6h
+
 def _trends_error_msg(exc: Exception) -> str:
     msg = str(exc).lower()
     if "quota" in msg or "rate" in msg or "429" in msg:
         return "Cuota de Google Trends temporalmente saturada. Prueba en unos minutos."
     if "timeout" in msg or "timed out" in msg:
         return "La consulta a Google Trends tardó demasiado. Intenta de nuevo."
-    if "related_queries" in msg:
+    if "related_queries" in msg or "400" in msg:
         return "Búsquedas relacionadas no disponibles en esta versión de trendspy."
     return f"Error consultando Google Trends: {str(exc)[:140]}"
 
@@ -361,32 +364,49 @@ def fetch_trends(
     timeframe: str | None = None,
     filtrar_topics: bool = True,
 ) -> dict:
-    tr = Trends()
     timeframe = timeframe or timeframe_from_days(2)
     geo = (geo or "VE").strip().upper()
-    time.sleep(2.0)  # Proteger cuota Google
+    cache_key = f"{keyword}:{kind}:{geo}:{timeframe}"
+    
+    # Check cache
+    cached = TRENDS_CACHE.get(cache_key)
+    if cached and (time.time() - cached["ts"] < TRENDS_CACHE_TTL):
+        return cached["data"]
+    
+    tr = Trends()
+    time.sleep(2.0)
 
-    if kind == "topics":
-        resultados = tr.related_topics(
-            keyword, geo=geo, timeframe=timeframe, headers=HEADERS_TRENDS
-        )
-        if filtrar_topics and isinstance(resultados, dict):
-            for clave, df in list(resultados.items()):
-                if isinstance(df, pd.DataFrame) and not df.empty and "topic_type" in df.columns:
-                    resultados[clave] = (
-                        df[df.apply(es_topic_valido, axis=1)].copy().reset_index(drop=True)
-                    )
-        return _serialize_payload(resultados)
+    try:
+        if kind == "topics":
+            resultados = tr.related_topics(
+                keyword, geo=geo, timeframe=timeframe, headers=HEADERS_TRENDS
+            )
+            if filtrar_topics and isinstance(resultados, dict):
+                for clave, df in list(resultados.items()):
+                    if isinstance(df, pd.DataFrame) and not df.empty and "topic_type" in df.columns:
+                        resultados[clave] = (
+                            df[df.apply(es_topic_valido, axis=1)].copy().reset_index(drop=True)
+                        )
+            data = _serialize_payload(resultados)
 
-    if kind == "queries":
-        if not hasattr(tr, "related_queries"):
-            raise RuntimeError("related_queries no disponible en esta versión de trendspy")
-        resultados = tr.related_queries(
-            keyword, geo=geo, timeframe=timeframe, headers=HEADERS_TRENDS
-        )
-        return _serialize_payload(resultados)
-
-    raise ValueError(f"Tipo de consulta inválido: {kind}. Debe ser 'topics' o 'queries'.")
+        elif kind == "queries":
+            if not hasattr(tr, "related_queries"):
+                raise RuntimeError("related_queries no disponible en esta versión de trendspy")
+            resultados = tr.related_queries(
+                keyword, geo=geo, timeframe=timeframe, headers=HEADERS_TRENDS
+            )
+            data = _serialize_payload(resultados)
+        else:
+            raise ValueError(f"Tipo de consulta inválido: {kind}. Debe ser 'topics' o 'queries'.")
+        
+        # Cache successful result
+        TRENDS_CACHE[cache_key] = {"data": data, "ts": time.time()}
+        return data
+    except Exception as e:
+        # If cached exists (stale), return it instead of failing
+        if cached:
+            return cached["data"]
+        raise
 
 
 # =============================================================================
