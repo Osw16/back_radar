@@ -182,6 +182,15 @@ def extraer_entidades(titulo: str) -> set:
     return entidades
 
 
+def inferir_seed_origen(entidad: str, titulos: list[str], pilar: str) -> str:
+    """Infiere un contexto editorial enriquecido basado en los titulares y el pilar."""
+    for t in titulos:
+        if entidad.lower() in t.lower() and len(t.split()) <= 9:
+            return t
+    pilar_limpio = pilar.split(" ", 1)[-1] if " " in pilar else pilar
+    return f"{entidad} en {pilar_limpio}"
+
+
 def tags_from_item(item: dict) -> list:
     tags, entidad = set(), (item.get("entidad") or "").lower()
     for titulo in item.get("titulos") or []:
@@ -231,7 +240,7 @@ def guardar_cache(resultados: dict) -> None:
         pass
 
 
-def fetch_top_tendencias(urls: list, top_n: int = 5) -> list:
+def fetch_top_tendencias(urls: list, top_n: int = 5, pilar: str = "") -> list:
     ahora = datetime.now(timezone.utc)
     corte = ahora - timedelta(hours=VENTANA_HORAS)
     tendencias = defaultdict(
@@ -290,8 +299,13 @@ def fetch_top_tendencias(urls: list, top_n: int = 5) -> list:
     resultados = []
     for entidad, v in ordenadas[:top_n]:
         titulo_principal = (v.get("titulos") or [""])[0]
+
+        # Propiedad de contexto enriquecido para el AI Service
+        seed_origen = inferir_seed_origen(entidad, v.get("titulos", []), pilar)
+
         item = {
             "entidad": entidad,
+            "seed_origen": seed_origen,
             **v,
             "freshness": freshness(v["horas"], v["etiqueta"], titulo_principal),
             "velocity_pct": velocity_pct(v["score"]),
@@ -305,9 +319,9 @@ def get_pilar_feed(pilar: str, top_n: int = 5) -> list:
     cache = cargar_cache()
     if pilar in cache and cache[pilar]:
         return cache[pilar]
-    
+
     urls = PILARES.get(pilar, [])
-    tendencias = fetch_top_tendencias(urls, top_n=top_n)
+    tendencias = fetch_top_tendencias(urls, top_n=top_n, pilar=pilar)
     if tendencias:
         cache = cargar_cache()
         cache[pilar] = tendencias
@@ -367,12 +381,11 @@ def fetch_trends(
     timeframe = timeframe or timeframe_from_days(2)
     geo = (geo or "VE").strip().upper()
     cache_key = f"{keyword}:{kind}:{geo}:{timeframe}"
-    
-    # Check cache
+
     cached = TRENDS_CACHE.get(cache_key)
     if cached and (time.time() - cached["ts"] < TRENDS_CACHE_TTL):
         return cached["data"]
-    
+
     tr = Trends()
     time.sleep(2.0)
 
@@ -398,12 +411,10 @@ def fetch_trends(
             data = _serialize_payload(resultados)
         else:
             raise ValueError(f"Tipo de consulta inválido: {kind}. Debe ser 'topics' o 'queries'.")
-        
-        # Cache successful result
+
         TRENDS_CACHE[cache_key] = {"data": data, "ts": time.time()}
         return data
     except Exception as e:
-        # If cached exists (stale), return it instead of failing
         if cached:
             return cached["data"]
         raise
@@ -431,6 +442,9 @@ app.add_middleware(
 class ExplainRequest(BaseModel):
     entidad: str = Field(..., description="Nombre de la entidad o deportista")
     titulo: str = Field(..., description="Titular de noticia asociado")
+    pilar: str = Field("⚾ LVBP & Béisbol", description="Pilar editorial activo")
+    titulos: list[str] = Field(default=[], description="Lista de titulares del cluster")
+    seed_origen: str | None = Field(None, description="Contexto o seed de origen detectado")
 
 
 class BriefRequest(BaseModel):
@@ -485,7 +499,13 @@ async def obtener_feed_pilar(
 
 @app.post("/api/rss/explain", tags=["Motor RSS - IA"])
 async def explicar_entidad_tendencia(req: ExplainRequest):
-    explicacion = explicar_tendencia(req.entidad, req.titulo)
+    explicacion = explicar_tendencia(
+        entidad=req.entidad,
+        titulo=req.titulo,
+        pilar=req.pilar,
+        titulos=req.titulos,
+        seed_origen=req.seed_origen
+    )
     return {
         "entidad": req.entidad,
         "explicacion": explicacion,

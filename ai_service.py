@@ -16,7 +16,7 @@ def explicar_tendencia(entidad: str, titulo: str) -> str:
     """Explica en 1-2 oraciones por qué la entidad es tendencia (Gemini 3.1 Flash Lite)."""
     if not client:
         return f"{entidad} genera conversación en redes tras las noticias recientes sobre: '{titulo}'."
-    
+
     prompt = (
         f"Explica de forma clara, directa y muy humana por qué '{entidad}' es tendencia hoy, "
         f"basándote en este titular: '{titulo}'. "
