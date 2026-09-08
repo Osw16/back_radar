@@ -12,13 +12,14 @@ if GEMINI_API_KEY:
         print(f"[Gemini Client Init Warning]: {e}")
 
 
-def explicar_tendencia(entidad: str, titulo: str) -> str:
+def explicar_tendencia(entidad: str, titulo: str, pilar: str = "", titulos: list = None, seed_origen: str = None) -> str:
     """Explica en 1-2 oraciones por qué la entidad es tendencia (Gemini 3.1 Flash Lite)."""
     if not client:
         return f"{entidad} genera conversación en redes tras las noticias recientes sobre: '{titulo}'."
 
+    pilar_context = f" dentro de {pilar}" if pilar else ""
     prompt = (
-        f"Explica de forma clara, directa y muy humana por qué '{entidad}' es tendencia hoy, "
+        f"Explica de forma clara, directa y muy humana por qué '{entidad}'(no te olvides de nombrar la entidad para darle sentido al contexto) es tendencia hoy{pilar_context}, "
         f"basándote en este titular: '{titulo}'. "
         f"Responde en español, máximo 2 oraciones."
     )
