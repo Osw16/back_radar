@@ -1,7 +1,9 @@
 import os
 import re
 from google import genai
+from dotenv import load_dotenv
 
+load_dotenv()
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
 client = None
@@ -17,11 +19,12 @@ def explicar_tendencia(entidad: str, titulo: str, pilar: str = "", titulos: list
     if not client:
         return f"{entidad} genera conversación en redes tras las noticias recientes sobre: '{titulo}'."
 
-    pilar_context = f" dentro de {pilar}" if pilar else ""
+    pilar_context = f" en el ámbito de {pilar}" if pilar else ""
     prompt = (
-        f"Explica de forma clara, directa y muy humana por qué '{entidad}'(no te olvides de nombrar la entidad para darle sentido al contexto) es tendencia hoy{pilar_context}, "
-        f"basándote en este titular: '{titulo}'. "
-        f"Responde en español, máximo 2 oraciones."
+        f"Eres un experto analista deportivo. Explica de forma clara, directa y concisa por qué '{entidad}' es tendencia hoy{pilar_context}, "
+        f"basándote estrictamente en este titular: '{titulo}'. "
+        f"No inventes relaciones con otros deportes ni menciones ligas que no aparezcan en el titular o pilar. "
+        f"Responde en castellano, máximo 2 oraciones."
     )
     try:
         resp = client.chats.create(model="gemini-3.1-flash-lite").send_message(prompt)

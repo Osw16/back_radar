@@ -8,8 +8,10 @@ import time
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from dotenv import load_dotenv
+load_dotenv()
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 import pandas as pd
@@ -22,7 +24,6 @@ from ai_service import explicar_tendencia, generar_brief
 # =============================================================================
 # 1. CONFIGURACIÓN Y CONSTANTES
 # =============================================================================
-load_dotenv()
 
 CORS_ORIGINS = [
     origin.strip()
@@ -240,6 +241,18 @@ def guardar_cache(resultados: dict) -> None:
         pass
 
 
+def _fetch_one_feed(url: str):
+    """Descarga y parsea un único feed RSS. Se ejecuta en un thread del pool."""
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=3) as r:
+            root = ET.fromstring(r.read())
+        dominio = urllib.parse.urlparse(url).netloc
+        return dominio, root
+    except Exception:
+        return None
+
+
 def fetch_top_tendencias(urls: list, top_n: int = 5, pilar: str = "") -> list:
     ahora = datetime.now(timezone.utc)
     corte = ahora - timedelta(hours=VENTANA_HORAS)
@@ -247,12 +260,14 @@ def fetch_top_tendencias(urls: list, top_n: int = 5, pilar: str = "") -> list:
         lambda: {"menciones": 0, "fuentes": set(), "titulos": [], "ultima": None}
     )
 
-    for url in urls:
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=6) as r:
-                root = ET.fromstring(r.read())
-            dominio = urllib.parse.urlparse(url).netloc
+    # Descarga en paralelo (I/O bound) en vez de secuencial
+    with ThreadPoolExecutor(max_workers=min(len(urls), 10) or 1) as executor:
+        futures = [executor.submit(_fetch_one_feed, url) for url in urls]
+        for future in as_completed(futures):
+            resultado = future.result()
+            if resultado is None:
+                continue
+            dominio, root = resultado
             for item in root.findall(".//item"):
                 pub = parse_pubdate(item)
                 if pub is None or pub < corte:
@@ -269,8 +284,6 @@ def fetch_top_tendencias(urls: list, top_n: int = 5, pilar: str = "") -> list:
                         d["titulos"].append(titulo)
                     if d["ultima"] is None or pub > d["ultima"]:
                         d["ultima"] = pub
-        except Exception:
-            pass
 
     validas = {}
     for k, v in tendencias.items():
@@ -442,7 +455,7 @@ app.add_middleware(
 class ExplainRequest(BaseModel):
     entidad: str = Field(..., description="Nombre de la entidad o deportista")
     titulo: str = Field(..., description="Titular de noticia asociado")
-    pilar: str = Field("⚾ LVBP & Béisbol", description="Pilar editorial activo")
+    pilar: str = ""
     titulos: list[str] = Field(default=[], description="Lista de titulares del cluster")
     seed_origen: str | None = Field(None, description="Contexto o seed de origen detectado")
 
@@ -450,7 +463,7 @@ class ExplainRequest(BaseModel):
 class BriefRequest(BaseModel):
     entidad: str
     titulo: str = ""
-    pilar: str = "⚾ LVBP & Béisbol"
+    pilar: str = ""
     score: float = 0.0
     menciones: int = 0
     etiqueta: str = "En seguimiento..."
